@@ -1,0 +1,112 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: #0a0c0f;
+  color: #e7e9ea;
+}
+
+body {
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+::selection {
+  background: #1f4a2a;
+  color: #e7e9ea;
+}
+
+/* Thin, quiet scrollbars so the terminal chrome doesn't feel like a browser */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a3140 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2a3140;
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.prompt-caret::after {
+  content: "";
+  display: inline-block;
+  width: 0.55em;
+  height: 1.1em;
+  margin-left: 2px;
+  background: #3fb950;
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}
+
+/* Chat markdown typography */
+.msg-prose p {
+  margin: 0 0 0.6em 0;
+  line-height: 1.55;
+}
+.msg-prose p:last-child {
+  margin-bottom: 0;
+}
+.msg-prose ul,
+.msg-prose ol {
+  margin: 0.4em 0 0.8em 1.25em;
+  line-height: 1.5;
+}
+.msg-prose code {
+  background: #161a22;
+  border: 1px solid #1f252e;
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.85em;
+  color: #58a6ff;
+}
+.msg-prose pre {
+  background: #10131a;
+  border: 1px solid #1f252e;
+  border-radius: 6px;
+  padding: 0.85em 1em;
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+.msg-prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #e7e9ea;
+}
+.msg-prose a {
+  color: #58a6ff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.msg-prose h1,
+.msg-prose h2,
+.msg-prose h3 {
+  font-family: "JetBrains Mono", monospace;
+  color: #e7e9ea;
+  margin: 0.8em 0 0.4em 0;
+  font-weight: 600;
+}
+
+/* Mermaid container */
+.mermaid-frame {
+  background: #10131a;
+  border: 1px solid #1f252e;
+  border-radius: 6px;
+  padding: 1rem;
+  margin: 0.75em 0;
+  overflow-x: auto;
+}
