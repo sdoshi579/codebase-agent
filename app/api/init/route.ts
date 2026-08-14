@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, unstable_after as after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import {
   RepoError,
@@ -83,20 +83,23 @@ export async function POST(req: NextRequest) {
   // session.graphStatus and reports "still indexing" rather than failing
   // while this is in flight -- see runQueryGraph in app/api/chat/route.ts.
   //
-  // This is wrapped in Next's `after()`, not a bare fire-and-forget promise.
-  // A plain `runGraphify(dir).then(...)` left dangling after the response
-  // returns is NOT reliably guaranteed to keep running in Next.js App
-  // Router -- that's not just a serverless/Vercel caveat, it's why `after()`
-  // exists as an API at all (stable in Next 15, available as
-  // `unstable_after` since 14.1, which is what's imported above given this
-  // project pins Next 14.2.15). A prior version of this code used a bare
-  // fire-and-forget call and produced sessions that stayed "pending"
-  // indefinitely with zero server logs -- total silence, meaning the work
-  // never ran at all, not that graphify hung. `after()` is the fix for that
-  // class of bug. The loud logging below also means silence can't happen
-  // again even if this diagnosis turns out to be wrong for some case: if
-  // "[init] starting background graphify" never prints, the call site itself
-  // isn't being reached, which is a different, more obvious problem to chase.
+  // This is a bare fire-and-forget promise, deliberately -- Next's after()
+  // was tried here first but doesn't exist in this project's pinned Next
+  // 14.2.15 (`unstable_after` was introduced later than that; a real build
+  // failure confirmed this, not a guess). The risk after() protects against
+  // -- a detached promise getting killed once a serverless function's
+  // response is sent -- doesn't apply to how this app is actually deployed:
+  // Render runs `next start` as one genuinely persistent, long-running Node
+  // process (see the hosting guide), not per-request serverless functions,
+  // so the Node event loop keeps this promise running to completion
+  // regardless of the HTTP response having already been returned below. If
+  // this project is ever deployed to a serverless platform instead (Vercel,
+  // etc), this exact call would need revisiting -- either via after() once
+  // available in whatever Next version is running there, or a real job
+  // queue. The loud logging below means silence can't hide whether this
+  // ran: if "[init] starting background graphify" never prints, the call
+  // site itself isn't being reached, which is a different, more obvious
+  // problem to chase than a graphify hang.
   const startGraphify = async () => {
     console.log(`[init] starting background graphify for session ${sessionId} (${dir})`);
     try {
@@ -113,19 +116,16 @@ export async function POST(req: NextRequest) {
       const message = err instanceof RepoError ? err.message : "Code graph indexing failed unexpectedly.";
       console.error("[init] background graphify failed for session", sessionId, "\n", err);
       setGraphStatus(sessionId, "failed", message);
+      // Without this, session.summary stays stuck at "" forever (only the
+      // success path ever wrote to it), so the header kept showing the
+      // original "Repo cloned. Indexing..." placeholder text side-by-side
+      // with a "failed" badge that contradicted it -- confusing regardless
+      // of what actually caused the failure.
+      setSummary(sessionId, "Repo cloned. Code graph indexing failed -- read_file still works for docs/config.");
     }
   };
 
-  if (typeof after === "function") {
-    after(startGraphify);
-  } else {
-    // Fallback if unstable_after isn't available in whatever Next version is
-    // actually installed -- same known-unreliable pattern as before, but
-    // better than throwing, and the logging above will at least make that
-    // unreliability visible instead of silent.
-    console.warn("[init] next/server unstable_after unavailable -- falling back to a bare fire-and-forget call.");
-    void startGraphify();
-  }
+  void startGraphify();
 
   setGenerating(sessionId, false);
   return NextResponse.json({

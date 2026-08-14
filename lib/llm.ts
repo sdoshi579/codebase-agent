@@ -1,11 +1,16 @@
 import { openai, createOpenAI } from "@ai-sdk/openai";
 
-// Use the Responses API (openai.responses(...)) rather than the classic Chat
-// Completions wrapper so conversation state can be carried via
-// previousResponseId -- the OpenAI-side equivalent of Gemini's
-// previous_interaction_id. See runOpenAiAgent in app/api/chat/route.ts.
+// Plain Chat Completions wrapper. openai.responses(...) (the Responses API)
+// was tried here to enable previousResponseId conversation continuation,
+// but that depended on a `providerOptions` field that doesn't exist on this
+// installed `ai` package version's streamText() options -- a real build
+// failure confirmed that, not a guess. Reverted to the well-established
+// Chat Completions path since the only reason to use .responses() was that
+// now-abandoned continuation attempt. OpenAI turns are stateless per-turn as
+// a result; Gemini keeps its own, separately-implemented conversation memory
+// (lastInteractionId), which has been tested against the real API and works.
 export function getOpenAiModel() {
-  return openai.responses("gpt-4o-mini");
+  return openai("gpt-4o-mini");
 }
 
 export function isOpenAiProvider(): boolean {

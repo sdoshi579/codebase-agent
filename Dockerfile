@@ -17,6 +17,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # what's actually needed here, not a workaround to avoid.
 RUN pip3 install --no-cache-dir --break-system-packages graphifyy
 
+# Fail the BUILD, loudly, if graphify isn't actually reachable on PATH --
+# rather than discovering that per-user at runtime as a silent, empty-stderr
+# failure that looks identical to "graphify ran and rejected this repo."
+# `which` finds it; `graphify --version` confirms it actually runs. If this
+# step fails, the fix belongs in this Dockerfile (the console script may be
+# landing somewhere other than /usr/local/bin depending on the base image's
+# pip config), not in application code.
+RUN which graphify && graphify --version
+
 WORKDIR /app
 
 # Install deps first so this layer only rebuilds when package files change,

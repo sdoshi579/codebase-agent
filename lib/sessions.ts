@@ -13,15 +13,13 @@ export interface Session {
   // Gemini's Interactions API keeps conversation state server-side -- this is
   // the id of the last completed interaction in this session's thread, so the
   // next user message can continue it via previous_interaction_id instead of
-  // starting a fresh, memory-less conversation every turn. Not used by the
-  // OpenAI path (see route.ts/llm.ts -- that one needs a different fix).
+  // starting a fresh, memory-less conversation every turn. OpenAI has no
+  // equivalent here: an attempt to add one via the Responses API's
+  // previousResponseId hit a real build failure (providerOptions isn't a
+  // valid streamText() field on the installed ai package version) and was
+  // reverted -- see lib/llm.ts and runOpenAiAgent in
+  // app/api/chat/route.ts. OpenAI turns are stateless per-turn as a result.
   lastInteractionId?: string;
-  // Same idea, OpenAI side: the last Responses API response id for this
-  // session's thread, so the next turn can continue it via
-  // previousResponseId instead of starting a fresh conversation. Note
-  // unlike Gemini this does NOT carry over the system/instructions message,
-  // so `system` is still resent every turn regardless -- see runOpenAiAgent.
-  lastOpenAiResponseId?: string;
   // Clone and graph indexing are decoupled: a session becomes usable (chat
   // works, read_file works) the moment the clone finishes, not after
   // graphify too. This tracks the background indexing job separately so
@@ -112,11 +110,6 @@ export function setGenerating(id: string, value: boolean): void {
 export function setLastInteractionId(id: string, interactionId: string | undefined): void {
   const s = sessions.get(id);
   if (s) s.lastInteractionId = interactionId;
-}
-
-export function setLastOpenAiResponseId(id: string, responseId: string | undefined): void {
-  const s = sessions.get(id);
-  if (s) s.lastOpenAiResponseId = responseId;
 }
 
 export function getExpiresAt(session: Session): number {

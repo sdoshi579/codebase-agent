@@ -9,7 +9,6 @@ import {
   getSession,
   setGenerating,
   setLastInteractionId,
-  setLastOpenAiResponseId,
   touchSession,
   type Session,
 } from "@/lib/sessions";
@@ -272,6 +271,18 @@ async function runOpenRouterAgent(
   }
 }
 
+// OpenAI turns are stateless per-turn: a previousResponseId-style
+// continuation (OpenAI's equivalent of Gemini's previous_interaction_id) was
+// attempted here, but `providerOptions` doesn't exist on this installed
+// version of the `ai` package's streamText() options -- confirmed by a real
+// build failure, not a guess this time. Rather than layer another unverified
+// API-shape guess on top (I can't test package installs in my sandbox
+// either), this reverts to the simpler, known-working shape: no conversation
+// memory across turns for OpenAI specifically. Gemini keeps its memory
+// (lastInteractionId) since that one's been tested against the real API and
+// works. If OpenAI continuity matters enough to revisit, the AI SDK's
+// current docs/changelog for whatever version actually gets installed would
+// be the place to check the real field name before trying again.
 async function runOpenAiAgent(
   graph: Graph,
   graphStatus: Session["graphStatus"],
@@ -279,24 +290,13 @@ async function runOpenAiAgent(
   repoRoot: string,
   system: string,
   message: string,
-  emit: (chunk: Uint8Array) => void,
-  initialResponseId: string | undefined
-): Promise<string | undefined> {
+  emit: (chunk: Uint8Array) => void
+): Promise<void> {
   const result = await streamText({
     model: getOpenAiModel(),
     system,
     prompt: message,
     maxSteps: MAX_AGENT_STEPS,
-    providerOptions: {
-      openai: {
-        // Continues the same server-side conversation instead of starting a
-        // fresh, memory-less one each turn -- OpenAI's equivalent of Gemini's
-        // previous_interaction_id. `system` above is still resent every turn
-        // on purpose: unlike Gemini, previousResponseId does not carry the
-        // prior instructions/system message forward.
-        previousResponseId: initialResponseId,
-      },
-    },
     tools: buildToolSet(graph, graphStatus, graphError, repoRoot, emit),
   });
 
@@ -307,22 +307,6 @@ async function runOpenAiAgent(
   for await (const delta of result.textStream) {
     emit(sseEncode("token", { text: delta }));
   }
-
-  // Response id for this turn arrives via providerMetadata once the stream
-  // finishes -- capture it so the next turn in this session can continue the
-  // conversation instead of starting cold. Named interface instead of `as
-  // any` for basic type safety, but this doesn't reduce the real uncertainty
-  // here: the shape below is inferred from a GitHub discussion snippet, not
-  // verified against the actual installed @ai-sdk/openai version. If it's
-  // wrong, responseId just comes back undefined and the next turn starts
-  // fresh (same as today) rather than throwing -- log
-  // JSON.stringify(await result.providerMetadata) once against a real turn
-  // to confirm the real key path if this doesn't seem to be working.
-  interface OpenAiProviderMetadata {
-    openai?: { responseId?: string };
-  }
-  const metadata = (await result.providerMetadata) as OpenAiProviderMetadata | undefined;
-  return metadata?.openai?.responseId;
 }
 
 export async function POST(req: NextRequest) {
@@ -436,17 +420,15 @@ export async function POST(req: NextRequest) {
             }
           }
         } else {
-          const nextResponseId = await runOpenAiAgent(
+          await runOpenAiAgent(
             graph,
             session.graphStatus,
             session.graphError,
             session.path,
             system,
             message,
-            emit,
-            session.lastOpenAiResponseId
+            emit
           );
-          setLastOpenAiResponseId(sessionId, nextResponseId);
         }
         emit(sseEncode("done", {}));
       } catch (err) {
@@ -455,7 +437,7 @@ export async function POST(req: NextRequest) {
         // or failures become undiagnosable from the client alone.
         const errorMsg = err instanceof Error ? err.message : "Agent failed to produce a response.";
         console.error("[chat] agent failed for session", sessionId, "\n", err);
-        emit(sseEncode("token", { text: "Not able to answer your question. Please try again." }));
+        emit(sseEncode("token", { text: `\n\n*Error: ${errorMsg}*` }));
         emit(sseEncode("error", { message: errorMsg }));
       } finally {
         setGenerating(sessionId, false);
