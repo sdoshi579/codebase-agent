@@ -241,11 +241,12 @@ async function runGeminiAgent(
   return previousInteractionId;
 }
 
-// Fallback-only path: OpenRouter's free router, used when Gemini itself is
-// out of quota mid-session. Deliberately simpler than runOpenAiAgent -- no
-// previousResponseId continuation, since OpenRouter speaks Chat Completions,
-// not the Responses API. A turn served here has no memory of earlier turns.
-async function runOpenRouterAgent(
+// Shared by both AI-SDK-backed providers (OpenAI, and OpenRouter as
+// Gemini's quota fallback) -- they differ only in which model they run
+// against, not in how a turn is executed.
+async function runAiSdkAgent(
+  model: ReturnType<typeof getOpenAiModel>,
+  providerLabel: string,
   graph: Graph,
   graphStatus: Session["graphStatus"],
   graphError: string | undefined,
@@ -255,7 +256,7 @@ async function runOpenRouterAgent(
   emit: (chunk: Uint8Array) => void
 ): Promise<void> {
   const result = await streamText({
-    model: getOpenRouterModel(),
+    model,
     system,
     prompt: message,
     maxSteps: MAX_AGENT_STEPS,
@@ -263,7 +264,7 @@ async function runOpenRouterAgent(
   });
 
   if (!result.textStream) {
-    throw new Error("OpenRouter streamText returned no textStream.");
+    throw new Error(`${providerLabel} streamText returned no textStream.`);
   }
 
   for await (const delta of result.textStream) {
@@ -271,43 +272,9 @@ async function runOpenRouterAgent(
   }
 }
 
-// OpenAI turns are stateless per-turn: a previousResponseId-style
-// continuation (OpenAI's equivalent of Gemini's previous_interaction_id) was
-// attempted here, but `providerOptions` doesn't exist on this installed
-// version of the `ai` package's streamText() options -- confirmed by a real
-// build failure, not a guess this time. Rather than layer another unverified
-// API-shape guess on top (I can't test package installs in my sandbox
-// either), this reverts to the simpler, known-working shape: no conversation
-// memory across turns for OpenAI specifically. Gemini keeps its memory
-// (lastInteractionId) since that one's been tested against the real API and
-// works. If OpenAI continuity matters enough to revisit, the AI SDK's
-// current docs/changelog for whatever version actually gets installed would
-// be the place to check the real field name before trying again.
-async function runOpenAiAgent(
-  graph: Graph,
-  graphStatus: Session["graphStatus"],
-  graphError: string | undefined,
-  repoRoot: string,
-  system: string,
-  message: string,
-  emit: (chunk: Uint8Array) => void
-): Promise<void> {
-  const result = await streamText({
-    model: getOpenAiModel(),
-    system,
-    prompt: message,
-    maxSteps: MAX_AGENT_STEPS,
-    tools: buildToolSet(graph, graphStatus, graphError, repoRoot, emit),
-  });
-
-  if (!result.textStream) {
-    throw new Error("OpenAI streamText returned no textStream.");
-  }
-
-  for await (const delta of result.textStream) {
-    emit(sseEncode("token", { text: delta }));
-  }
-}
+// OpenAI is stateless per-turn -- no cross-turn conversation memory, unlike
+// Gemini's lastInteractionId. (The AI SDK version installed here doesn't
+// support a previousResponseId-style continuation option.)
 
 export async function POST(req: NextRequest) {
   const ip = clientIp(req);
@@ -400,13 +367,12 @@ export async function POST(req: NextRequest) {
                 geminiErr
               );
               emit(sseEncode("token", { text: "*(Gemini quota reached -- falling back to a free model.)*\n\n" }));
-              // No session interaction id to persist here: this turn didn't
-              // go through Gemini, and the fallback path has no
-              // conversation-continuation mechanism of its own (see
-              // runOpenRouterAgent). The NEXT turn will still try Gemini
-              // first and resume its own thread from session.lastInteractionId
-              // as normal -- only this one turn is served differently.
-              await runOpenRouterAgent(
+              // No interaction id to persist -- this turn skipped Gemini
+              // entirely. Next turn still tries Gemini first from
+              // session.lastInteractionId as normal.
+              await runAiSdkAgent(
+                getOpenRouterModel(),
+                "OpenRouter",
                 graph,
                 session.graphStatus,
                 session.graphError,
@@ -420,7 +386,9 @@ export async function POST(req: NextRequest) {
             }
           }
         } else {
-          await runOpenAiAgent(
+          await runAiSdkAgent(
+            getOpenAiModel(),
+            "OpenAI",
             graph,
             session.graphStatus,
             session.graphError,

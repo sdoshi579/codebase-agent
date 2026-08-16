@@ -76,30 +76,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unexpected error while cloning the repo." }, { status: 500 });
   }
 
-  // graphify runs in the background, NOT awaited in the sense of blocking
-  // this response -- it's the slow, CPU-bound part (AST parsing every file),
-  // and there's no reason to make the user wait through it when read_file
-  // already works on the cloned repo alone. query_graph checks
-  // session.graphStatus and reports "still indexing" rather than failing
-  // while this is in flight -- see runQueryGraph in app/api/chat/route.ts.
+  // graphify runs in the background, not awaited by this response -- it's
+  // the slow, CPU-bound part (AST parsing every file), and read_file already
+  // works on the cloned repo alone without it. session.graphStatus tracks
+  // this separately (see lib/sessions.ts); query_graph reports "still
+  // indexing" while it's in flight rather than failing.
   //
-  // This is a bare fire-and-forget promise, deliberately -- Next's after()
-  // was tried here first but doesn't exist in this project's pinned Next
-  // 14.2.15 (`unstable_after` was introduced later than that; a real build
-  // failure confirmed this, not a guess). The risk after() protects against
-  // -- a detached promise getting killed once a serverless function's
-  // response is sent -- doesn't apply to how this app is actually deployed:
-  // Render runs `next start` as one genuinely persistent, long-running Node
-  // process (see the hosting guide), not per-request serverless functions,
-  // so the Node event loop keeps this promise running to completion
-  // regardless of the HTTP response having already been returned below. If
-  // this project is ever deployed to a serverless platform instead (Vercel,
-  // etc), this exact call would need revisiting -- either via after() once
-  // available in whatever Next version is running there, or a real job
-  // queue. The loud logging below means silence can't hide whether this
-  // ran: if "[init] starting background graphify" never prints, the call
-  // site itself isn't being reached, which is a different, more obvious
-  // problem to chase than a graphify hang.
+  // Deliberately a bare fire-and-forget promise, not Next's after() -- this
+  // app runs as a persistent `next start` process (see the hosting guide),
+  // not per-request serverless functions, so the Node event loop keeps this
+  // running to completion regardless of the response having already
+  // returned below. If this is ever deployed serverless instead, this call
+  // needs revisiting (after(), or a real job queue). The logging below
+  // exists so silence is diagnosable: if "[init] starting background
+  // graphify" never prints, the call site itself isn't being reached.
   const startGraphify = async () => {
     console.log(`[init] starting background graphify for session ${sessionId} (${dir})`);
     try {
@@ -116,11 +106,9 @@ export async function POST(req: NextRequest) {
       const message = err instanceof RepoError ? err.message : "Code graph indexing failed unexpectedly.";
       console.error("[init] background graphify failed for session", sessionId, "\n", err);
       setGraphStatus(sessionId, "failed", message);
-      // Without this, session.summary stays stuck at "" forever (only the
-      // success path ever wrote to it), so the header kept showing the
-      // original "Repo cloned. Indexing..." placeholder text side-by-side
-      // with a "failed" badge that contradicted it -- confusing regardless
-      // of what actually caused the failure.
+      // Keeps the header from showing a stale "Indexing..." placeholder
+      // next to a "failed" badge -- only the success path used to update
+      // summary, so failure left it stuck at its initial placeholder text.
       setSummary(sessionId, "Repo cloned. Code graph indexing failed -- read_file still works for docs/config.");
     }
   };

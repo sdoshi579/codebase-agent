@@ -154,15 +154,9 @@ interface StreamInteractionOptions {
 }
 
 // Per the SSE spec, one logical event's data can span multiple `data:`
-// lines within a single blank-line-delimited frame -- the reconstructed
-// value joins those lines with "\n" between them, not concatenated bare.
-// The previous version parsed each `data:` line as its own complete JSON
-// payload, which happens to work when the server always emits compact
-// (single-line) JSON per event, but would silently fail JSON.parse on every
-// fragment (each individual line being invalid JSON on its own) if the
-// server ever emitted a pretty-printed or otherwise multi-line payload --
-// caught by the empty catch below and the whole event just vanishes. This
-// accumulates all data: lines in one chunk into a single value first.
+// lines within a frame, reconstructed by joining them with "\n". Exported
+// for direct testing since this exact function previously dropped events
+// silently when a payload spanned multiple lines.
 export function parseSseEvents(chunk: string): GeminiStreamEvent[] {
   const dataLines = chunk
     .split(/\r?\n/)
@@ -345,11 +339,7 @@ export async function streamInteraction(
     body.previous_interaction_id = options.previousInteractionId;
   }
 
-  console.log("\n==================== LLM REQUEST ====================");
-  console.log("URL:", INTERACTIONS_URL);
-  console.log("Model:", GEMINI_MODEL);
-  console.log("Body:", JSON.stringify(body, null, 2));
-  console.log("=====================================================\n");
+  console.log(`[gemini] request: model=${GEMINI_MODEL} previousInteractionId=${options.previousInteractionId ?? "none"}`);
 
   const res = await fetch(INTERACTIONS_URL, {
     method: "POST",
@@ -361,11 +351,9 @@ export async function streamInteraction(
     body: JSON.stringify(body),
   });
 
-  console.log(`[LLM Response Status] ${res.status} ${res.statusText}`);
-
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
-    console.error("[LLM Response Error Detail]:", detail);
+    console.error(`[gemini] HTTP ${res.status}:`, detail.slice(0, 500));
     throw new Error(`Gemini Interactions API ${res.status}: ${detail.slice(0, 500)}`);
   }
   if (!res.body) {
@@ -401,17 +389,10 @@ export async function streamInteraction(
 
     try {
       for (const chunk of chunks) {
-        if (chunk.trim()) {
-          console.log("[LLM SSE Chunk Received]:\n", chunk);
-        }
-
         const events = parseSseEvents(chunk);
         for (const event of events) {
-          console.log("[LLM SSE Parsed Event]:\n", JSON.stringify(event, null, 2));
-
           const textDelta = extractDeltaText(event);
           if (textDelta) {
-            console.log(`[LLM Text Delta]: ${JSON.stringify(textDelta)}`);
             streamedText += textDelta;
             options.onTextDelta(textDelta);
           }
@@ -494,19 +475,15 @@ export async function streamInteraction(
   if (!streamedText) {
     const fallback = extractTextFromSteps(lastInteraction);
     if (fallback) {
-      console.log(`[LLM Fallback Extracted Text]: ${JSON.stringify(fallback)}`);
       options.onTextDelta(fallback);
     }
   }
 
   const functionCalls = collectFunctionCalls(pendingByIndex, lastInteraction);
 
-  console.log("\n==================== LLM RESPONSE COMPLETE ====================");
-  console.log("Interaction ID:", interactionId);
-  console.log("Status:", status);
-  console.log("Streamed Text Length:", streamedText.length);
-  console.log("Function Calls:", JSON.stringify(functionCalls, null, 2));
-  console.log("===============================================================\n");
+  console.log(
+    `[gemini] response: interactionId=${interactionId} status=${status} textLen=${streamedText.length} toolCalls=${functionCalls.map((c) => c.name).join(",") || "none"}`
+  );
 
   return {
     interactionId,
