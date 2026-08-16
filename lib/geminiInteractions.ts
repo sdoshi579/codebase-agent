@@ -163,7 +163,7 @@ interface StreamInteractionOptions {
 // server ever emitted a pretty-printed or otherwise multi-line payload --
 // caught by the empty catch below and the whole event just vanishes. This
 // accumulates all data: lines in one chunk into a single value first.
-function parseSseEvents(chunk: string): GeminiStreamEvent[] {
+export function parseSseEvents(chunk: string): GeminiStreamEvent[] {
   const dataLines = chunk
     .split(/\r?\n/)
     .filter((line) => line.trim().startsWith("data:"))
